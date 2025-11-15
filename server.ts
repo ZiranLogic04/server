@@ -8,16 +8,20 @@ serve((req) => {
   socket.onopen = () => console.log("Client connected");
 
   socket.onmessage = (e) => {
-    const data = JSON.parse(e.data);
+    try {
+      const data = JSON.parse(e.data);
 
-    if (data.type === "register") {
-      clients.set(data.id, socket);
-      console.log("Registered:", data.id);
-    }
+      if (data.type === "register") {
+        clients.set(data.id, socket);
+        console.log("Registered:", data.id);
+      }
 
-    if (data.type === "signal") {
-      const target = clients.get(data.target);
-      if (target) target.send(JSON.stringify(data));
+      if (data.type === "signal") {
+        const target = clients.get(data.target);
+        if (target) target.send(JSON.stringify(data));
+      }
+    } catch (err) {
+      console.log("Error:", err);
     }
   };
 
