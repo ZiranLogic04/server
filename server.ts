@@ -1,4 +1,4 @@
-// SatpamCam WebRTC Signaling Server
+// SatpamCam WebRTC Signaling Server - FIXED
 const clients = new Map();
 
 console.log("🚀 SatpamCam Server starting...");
@@ -21,15 +21,45 @@ Deno.serve((req: Request) => {
     socket.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
-        console.log(`📨 ${data.type} from ${data.from} to ${data.to}`);
+        console.log(`📨 ${data.type} from ${data.from}`);
         
-        // Forward message ke target client
-        if (data.to && clients.has(data.to)) {
+        // FIX: Handle missing targetStream
+        if (data.type === 'offer') {
+          const targetStream = data.targetStream || data.to;
+          console.log(`🎯 Looking for stream: ${targetStream}`);
+          
+          // Find desktop client with matching stream ID
+          let targetClient = null;
+          for (const [clientId, clientSocket] of clients.entries()) {
+            // For now, forward to first available desktop
+            // In production, you'd match by stream ID
+            if (clientSocket !== socket) { // Don't send to self
+              targetClient = clientId;
+              break;
+            }
+          }
+          
+          if (targetClient) {
+            console.log(`✅ Forwarding offer to: ${targetClient}`);
+            clients.get(targetClient).send(JSON.stringify({
+              ...data,
+              targetStream: targetStream,
+              from: data.from // Mobile ID
+            }));
+          } else {
+            console.log(`❌ No desktop streamer available`);
+            socket.send(JSON.stringify({
+              type: 'error',
+              message: 'No desktop streamer available'
+            }));
+          }
+        }
+        // Forward other messages
+        else if (data.to && clients.has(data.to)) {
           clients.get(data.to).send(e.data);
           console.log(`✅ Message forwarded to ${data.to}`);
-        } else if (data.to) {
-          console.log(`❌ Target not found: ${data.to}`);
         }
+        
       } catch (err) {
         console.error("❌ Message error:", err);
       }
@@ -45,14 +75,10 @@ Deno.serve((req: Request) => {
       });
     };
     
-    socket.onerror = (e) => {
-      console.error("❌ WebSocket error:", e);
-    };
-    
     return response;
   }
   
-  // HTTP Page - Untuk test
+  // HTTP Page
   if (url.pathname === "/") {
     return new Response(`
       <!DOCTYPE html>
@@ -73,19 +99,15 @@ Deno.serve((req: Request) => {
           <p><strong>Server:</strong> Deno Deploy (Free)</p>
           <p><strong>URL:</strong> ${req.url}</p>
         </div>
-        <p>Server ready untuk WebRTC signaling antara Desktop dan Mobile.</p>
+        <div>
+          <h3>Connected Clients:</h3>
+          <ul>
+            ${Array.from(clients.keys()).map(id => `<li>${id}</li>`).join('')}
+          </ul>
+        </div>
       </body>
       </html>
     `, { headers: { "Content-Type": "text/html" } });
-  }
-  
-  // Health check endpoint
-  if (url.pathname === "/health") {
-    return new Response(JSON.stringify({
-      status: "ok",
-      clients: clients.size,
-      timestamp: new Date().toISOString()
-    }), { headers: { "Content-Type": "application/json" } });
   }
   
   return new Response("Not Found", { status: 404 });
