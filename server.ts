@@ -1,4 +1,3 @@
-// Contoh server.ts signaling server
 import { serve } from "https://deno.land/std@0.200.0/http/server.ts";
 
 const clients = new Map<string, WebSocket>();
@@ -18,7 +17,9 @@ serve((req) => {
 
     if (data.type === "signal") {
       const target = clients.get(data.target);
-      if (target) target.send(JSON.stringify(data));
+      if (target) {
+        target.send(JSON.stringify({...data, from: data.from || "unknown"}));
+      }
     }
   };
 
