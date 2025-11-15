@@ -1,94 +1,52 @@
-// 📁 server.ts - Deno Deploy Version
-import { Application, Router } from "https://deno.land/x/oak/mod.ts";
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 
-const app = new Application();
-const router = new Router();
+const clients = new Map();
 
-// CORS middleware
-app.use(async (ctx, next) => {
-  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
-  ctx.response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  ctx.response.headers.set("Access-Control-Allow-Headers", "Content-Type");
-  await next();
-});
-
-// Simple WebSocket signaling (PeerJS replacement)
-const connections = new Map<string, WebSocket>();
-
-router.get("/ws", (ctx) => {
-  if (!ctx.isUpgradable) {
-    ctx.throw(501);
-  }
+serve(async (req) => {
+  const url = new URL(req.url);
   
-  const ws = ctx.upgrade();
-  const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  connections.set(clientId, ws);
-  
-  ws.onopen = () => {
-    console.log(`🔗 Client connected: ${clientId}`);
-    ws.send(JSON.stringify({ type: "welcome", clientId }));
-  };
-  
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      
-      // Relay messages to other clients
-      if (data.targetId && connections.has(data.targetId)) {
-        connections.get(data.targetId)!.send(JSON.stringify({
-          ...data,
-          senderId: clientId
-        }));
-      }
-    } catch (error) {
-      console.error("Message error:", error);
+  if (url.pathname === "/ws") {
+    if (req.headers.get("upgrade") !== "websocket") {
+      return new Response("Expected WebSocket", { status: 426 });
     }
-  };
-  
-  ws.onclose = () => {
-    console.log(`🔌 Client disconnected: ${clientId}`);
-    connections.delete(clientId);
-  };
-  
-  ws.onerror = (error) => {
-    console.error(`❌ WebSocket error: ${error}`);
-  };
-});
-
-// Health check
-router.get("/", (ctx) => {
-  ctx.response.body = {
-    status: "SatpamCam Signaling Server",
-    clients: connections.size,
-    timestamp: new Date().toISOString()
-  };
-});
-
-// License validation endpoint
-router.post("/api/validate", async (ctx) => {
-  try {
-    const body = await ctx.request.body().value;
-    const { licenseKey } = body;
     
-    // Simple validation - bisa extend dengan database
-    const isValid = licenseKey && licenseKey.startsWith("DIVIACODE-");
+    const { socket, response } = Deno.upgradeWebSocket(req);
     
-    ctx.response.body = {
-      valid: isValid,
-      streamId: isValid ? `satpam-${licenseKey}` : null,
-      message: isValid ? "License valid" : "License invalid"
+    socket.onopen = () => {
+      const id = `peer_${Date.now()}`;
+      clients.set(id, socket);
+      socket.send(JSON.stringify({ type: "id", id }));
+      console.log(`Client connected: ${id}`);
     };
-  } catch (error) {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Invalid request" };
+    
+    socket.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        console.log(`Message from ${data.from} to ${data.to}`);
+        
+        if (data.to && clients.has(data.to)) {
+          clients.get(data.to).send(e.data);
+        }
+      } catch (err) {
+        console.error("Message error:", err);
+      }
+    };
+    
+    socket.onclose = () => {
+      clients.forEach((client, id) => {
+        if (client === socket) {
+          clients.delete(id);
+          console.log(`Client disconnected: ${id}`);
+        }
+      });
+    };
+    
+    socket.onerror = (e) => {
+      console.error("WebSocket error:", e);
+    };
+    
+    return response;
   }
+  
+  return new Response("WebRTC Signaling Server");
 });
-
-app.use(router.routes());
-app.use(router.allowedMethods());
-
-const PORT = Deno.env.get("PORT") || "8000";
-console.log(`🚀 SatpamCam Server running on port ${PORT}`);
-
-await app.listen({ port: parseInt(PORT) });
